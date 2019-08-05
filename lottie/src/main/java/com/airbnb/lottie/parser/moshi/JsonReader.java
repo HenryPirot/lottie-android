@@ -17,12 +17,7 @@ package com.airbnb.lottie.parser.moshi;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-
-import androidx.annotation.Nullable;
 import okio.Buffer;
 import okio.BufferedSink;
 import okio.BufferedSource;
@@ -386,7 +381,7 @@ public abstract class JsonReader implements Closeable {
           result[i] = buffer.readByteString();
         }
         return new Options(strings.clone(), okio.Options.of(result));
-      } catch (IOException e) {
+      } catch (Exception e) {
         throw new AssertionError(e);
       }
     }

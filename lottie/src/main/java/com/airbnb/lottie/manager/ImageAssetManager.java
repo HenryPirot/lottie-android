@@ -14,7 +14,6 @@ import com.airbnb.lottie.LottieImageAsset;
 import com.airbnb.lottie.utils.Logger;
 import com.airbnb.lottie.utils.Utils;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
@@ -109,7 +108,7 @@ public class ImageAssetManager {
             " Set it with LottieComposition#setImagesFolder or LottieDrawable#setImagesFolder");
       }
       is = context.getAssets().open(imagesFolder + filename);
-    } catch (IOException e) {
+    } catch (Exception e) {
       Logger.warning("Unable to open asset.", e);
       return null;
     }

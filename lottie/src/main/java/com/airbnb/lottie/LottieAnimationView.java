@@ -69,7 +69,8 @@ import static com.airbnb.lottie.RenderMode.HARDWARE;
         Logger.warning("Unable to load composition.", throwable);
         return;
       }
-      throw new IllegalStateException("Unable to parse composition", throwable);
+      Logger.debug("Unable to load composition.",throwable);
+//      throw new IllegalStateException("Unable to parse composition", throwable);
     }
   };
 
