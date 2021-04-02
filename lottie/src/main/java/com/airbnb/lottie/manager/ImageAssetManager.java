@@ -4,10 +4,11 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.Drawable;
-import androidx.annotation.Nullable;
 import android.text.TextUtils;
 import android.util.Base64;
 import android.view.View;
+
+import androidx.annotation.Nullable;
 
 import com.airbnb.lottie.ImageAssetDelegate;
 import com.airbnb.lottie.LottieImageAsset;
@@ -22,16 +23,16 @@ public class ImageAssetManager {
   private static final Object bitmapHashLock = new Object();
 
   private final Context context;
-  private String imagesFolder;
+  private final String imagesFolder;
   @Nullable private ImageAssetDelegate delegate;
   private final Map<String, LottieImageAsset> imageAssets;
 
   public ImageAssetManager(Drawable.Callback callback, String imagesFolder,
       ImageAssetDelegate delegate, Map<String, LottieImageAsset> imageAssets) {
-    this.imagesFolder = imagesFolder;
-    if (!TextUtils.isEmpty(imagesFolder) &&
-        this.imagesFolder.charAt(this.imagesFolder.length() - 1) != '/') {
-      this.imagesFolder += '/';
+    if (!TextUtils.isEmpty(imagesFolder) && imagesFolder.charAt(imagesFolder.length() - 1) != '/') {
+      this.imagesFolder = imagesFolder + '/';
+    } else {
+      this.imagesFolder = imagesFolder;
     }
 
     if (!(callback instanceof View)) {
@@ -42,6 +43,17 @@ public class ImageAssetManager {
     }
 
     context = ((View) callback).getContext();
+    this.imageAssets = imageAssets;
+    setDelegate(delegate);
+  }
+
+  public ImageAssetManager(Context context, String imagesFolder, ImageAssetDelegate delegate, Map<String, LottieImageAsset> imageAssets) {
+    this.context = context;
+    if (!TextUtils.isEmpty(imagesFolder) && imagesFolder.charAt(imagesFolder.length() - 1) != '/') {
+      this.imagesFolder = imagesFolder + '/';
+    } else {
+      this.imagesFolder = imagesFolder;
+    }
     this.imageAssets = imageAssets;
     setDelegate(delegate);
   }
@@ -112,7 +124,12 @@ public class ImageAssetManager {
       Logger.warning("Unable to open asset.", e);
       return null;
     }
-    bitmap = BitmapFactory.decodeStream(is, null, opts);
+    try {
+      bitmap = BitmapFactory.decodeStream(is, null, opts);
+    } catch (IllegalArgumentException e) {
+      Logger.warning("Unable to decode image.", e);
+      return null;
+    }
     bitmap = Utils.resizeBitmapIfNeeded(bitmap, asset.getWidth(), asset.getHeight());
     return putBitmap(id, bitmap);
   }

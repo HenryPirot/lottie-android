@@ -1,27 +1,30 @@
 package com.airbnb.lottie.animation.keyframe;
 
-import android.graphics.Matrix;
-import android.graphics.PointF;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
-import com.airbnb.lottie.value.Keyframe;
-import com.airbnb.lottie.value.LottieValueCallback;
-import com.airbnb.lottie.value.ScaleXY;
-import com.airbnb.lottie.model.animatable.AnimatableTransform;
-import com.airbnb.lottie.model.layer.BaseLayer;
-
-import java.util.Collections;
-
 import static com.airbnb.lottie.LottieProperty.TRANSFORM_ANCHOR_POINT;
 import static com.airbnb.lottie.LottieProperty.TRANSFORM_END_OPACITY;
 import static com.airbnb.lottie.LottieProperty.TRANSFORM_OPACITY;
 import static com.airbnb.lottie.LottieProperty.TRANSFORM_POSITION;
+import static com.airbnb.lottie.LottieProperty.TRANSFORM_POSITION_X;
+import static com.airbnb.lottie.LottieProperty.TRANSFORM_POSITION_Y;
 import static com.airbnb.lottie.LottieProperty.TRANSFORM_ROTATION;
 import static com.airbnb.lottie.LottieProperty.TRANSFORM_SCALE;
 import static com.airbnb.lottie.LottieProperty.TRANSFORM_SKEW;
 import static com.airbnb.lottie.LottieProperty.TRANSFORM_SKEW_ANGLE;
 import static com.airbnb.lottie.LottieProperty.TRANSFORM_START_OPACITY;
+
+import android.graphics.Matrix;
+import android.graphics.PointF;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+import com.airbnb.lottie.model.animatable.AnimatableTransform;
+import com.airbnb.lottie.model.layer.BaseLayer;
+import com.airbnb.lottie.value.Keyframe;
+import com.airbnb.lottie.value.LottieValueCallback;
+import com.airbnb.lottie.value.ScaleXY;
+
+import java.util.Collections;
 
 public class TransformKeyframeAnimation {
   private final Matrix matrix = new Matrix();
@@ -119,7 +122,7 @@ public class TransformKeyframeAnimation {
     }
   }
 
-  public void  setProgress(float progress) {
+  public void setProgress(float progress) {
     if (opacity != null) {
       opacity.setProgress(progress);
     }
@@ -174,7 +177,7 @@ public class TransformKeyframeAnimation {
     if (rotation != null) {
       float rotation;
       if (this.rotation instanceof ValueCallbackKeyframeAnimation) {
-          rotation = this.rotation.getValue();
+        rotation = this.rotation.getValue();
       } else {
         rotation = ((FloatKeyframeAnimation) this.rotation).getFloatValue();
       }
@@ -278,6 +281,10 @@ public class TransformKeyframeAnimation {
       } else {
         position.setValueCallback((LottieValueCallback<PointF>) callback);
       }
+    } else if (property == TRANSFORM_POSITION_X && position instanceof SplitDimensionPathKeyframeAnimation) {
+      ((SplitDimensionPathKeyframeAnimation) position).setXValueCallback((LottieValueCallback<Float>) callback);
+    } else if (property == TRANSFORM_POSITION_Y && position instanceof SplitDimensionPathKeyframeAnimation) {
+      ((SplitDimensionPathKeyframeAnimation) position).setYValueCallback((LottieValueCallback<Float>) callback);
     } else if (property == TRANSFORM_SCALE) {
       if (scale == null) {
         scale = new ValueCallbackKeyframeAnimation(callback, new ScaleXY());

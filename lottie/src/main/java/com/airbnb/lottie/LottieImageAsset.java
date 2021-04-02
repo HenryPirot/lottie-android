@@ -1,6 +1,7 @@
 package com.airbnb.lottie;
 
 import android.graphics.Bitmap;
+
 import androidx.annotation.Nullable;
 import androidx.annotation.RestrictTo;
 
@@ -13,7 +14,9 @@ public class LottieImageAsset {
   private final String id;
   private final String fileName;
   private final String dirName;
-  /** Pre-set a bitmap for this asset */
+  /**
+   * Pre-set a bitmap for this asset
+   */
   @Nullable private Bitmap bitmap;
 
   @RestrictTo(RestrictTo.Scope.LIBRARY)
@@ -57,5 +60,12 @@ public class LottieImageAsset {
    */
   public void setBitmap(@Nullable Bitmap bitmap) {
     this.bitmap = bitmap;
+  }
+
+  /**
+   * Returns whether this asset has an embedded Bitmap or whether the fileName is a base64 encoded bitmap.
+   */
+  public boolean hasBitmap() {
+    return bitmap != null || (fileName.startsWith("data:") && fileName.indexOf("base64,") > 0);
   }
 }

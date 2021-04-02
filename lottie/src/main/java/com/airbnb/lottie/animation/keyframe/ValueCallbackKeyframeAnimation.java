@@ -1,6 +1,7 @@
 package com.airbnb.lottie.animation.keyframe;
 
 import androidx.annotation.Nullable;
+
 import com.airbnb.lottie.value.Keyframe;
 import com.airbnb.lottie.value.LottieFrameInfo;
 import com.airbnb.lottie.value.LottieValueCallback;
@@ -20,6 +21,10 @@ public class ValueCallbackKeyframeAnimation<K, A> extends BaseKeyframeAnimation<
     super(Collections.<Keyframe<K>>emptyList());
     setValueCallback(valueCallback);
     this.valueCallbackValue = valueCallbackValue;
+  }
+
+  @Override public void setProgress(float progress) {
+    this.progress = progress;
   }
 
   /**

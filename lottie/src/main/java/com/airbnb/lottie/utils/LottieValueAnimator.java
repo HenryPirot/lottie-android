@@ -1,12 +1,14 @@
 package com.airbnb.lottie.utils;
 
 import android.animation.ValueAnimator;
+import android.view.Choreographer;
+
 import androidx.annotation.FloatRange;
 import androidx.annotation.MainThread;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
-import android.view.Choreographer;
 
+import com.airbnb.lottie.L;
 import com.airbnb.lottie.LottieComposition;
 
 /**
@@ -82,6 +84,7 @@ public class LottieValueAnimator extends BaseLottieAnimator implements Choreogra
       return;
     }
 
+    L.beginSection("LottieValueAnimator#doFrame");
     long now = frameTimeNanos;
     long timeSinceFrame = lastFrameTimeNs == 0 ? 0 : now - lastFrameTimeNs;
     float frameDuration = getFrameDurationNs();
@@ -113,6 +116,7 @@ public class LottieValueAnimator extends BaseLottieAnimator implements Choreogra
     }
 
     verifyFrame();
+    L.endSection("LottieValueAnimator#doFrame");
   }
 
   private float getFrameDurationNs() {
@@ -135,8 +139,8 @@ public class LottieValueAnimator extends BaseLottieAnimator implements Choreogra
 
     if (keepMinAndMaxFrames) {
       setMinAndMaxFrames(
-              (int) Math.max(this.minFrame, composition.getStartFrame()),
-              (int) Math.min(this.maxFrame, composition.getEndFrame())
+          (int) Math.max(this.minFrame, composition.getStartFrame()),
+          (int) Math.min(this.maxFrame, composition.getEndFrame())
       );
     } else {
       setMinAndMaxFrames((int) composition.getStartFrame(), (int) composition.getEndFrame());
@@ -144,6 +148,7 @@ public class LottieValueAnimator extends BaseLottieAnimator implements Choreogra
     float frame = this.frame;
     this.frame = 0f;
     setFrame((int) frame);
+    notifyUpdate();
   }
 
   public void setFrame(float frame) {

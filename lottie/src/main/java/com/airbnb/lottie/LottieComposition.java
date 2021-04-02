@@ -3,13 +3,13 @@ package com.airbnb.lottie;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Rect;
+
 import androidx.annotation.Nullable;
 import androidx.annotation.RawRes;
 import androidx.annotation.RestrictTo;
 import androidx.annotation.WorkerThread;
 import androidx.collection.LongSparseArray;
 import androidx.collection.SparseArrayCompat;
-import android.util.Log;
 
 import com.airbnb.lottie.model.Font;
 import com.airbnb.lottie.model.FontCharacter;
@@ -20,7 +20,6 @@ import com.airbnb.lottie.utils.Logger;
 
 import org.json.JSONObject;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -31,9 +30,9 @@ import java.util.Map;
 /**
  * After Effects/Bodymovin composition model. This is the serialized model from which the
  * animation will be created.
- *
+ * <p>
  * To create one, use {@link LottieCompositionFactory}.
- *
+ * <p>
  * It can be used with a {@link com.airbnb.lottie.LottieAnimationView} or
  * {@link com.airbnb.lottie.LottieDrawable}.
  */
@@ -43,7 +42,9 @@ public class LottieComposition {
   private final HashSet<String> warnings = new HashSet<>();
   private Map<String, List<Layer>> precomps;
   private Map<String, LottieImageAsset> images;
-  /** Map of font names to fonts */
+  /**
+   * Map of font names to fonts
+   */
   private Map<String, Font> fonts;
   private List<Marker> markers;
   private SparseArrayCompat<FontCharacter> characters;
@@ -141,12 +142,10 @@ public class LottieComposition {
     return (long) (getDurationFrames() / frameRate * 1000);
   }
 
-  @RestrictTo(RestrictTo.Scope.LIBRARY)
   public float getStartFrame() {
     return startFrame;
   }
 
-  @RestrictTo(RestrictTo.Scope.LIBRARY)
   public float getEndFrame() {
     return endFrame;
   }
@@ -180,7 +179,7 @@ public class LottieComposition {
   @Nullable
   public Marker getMarker(String markerName) {
     int size = markers.size();
-    for (int i = 0; i < markers.size(); i++) {
+    for (int i = 0; i < size; i++) {
       Marker marker = markers.get(i);
       if (marker.matchesName(markerName)) {
         return marker;
@@ -225,6 +224,7 @@ public class LottieComposition {
     /**
      * @see LottieCompositionFactory#fromAsset(Context, String)
      */
+    @SuppressWarnings("deprecation")
     @Deprecated
     public static Cancellable fromAssetFileName(Context context, String fileName, OnCompositionLoadedListener l) {
       ListenerAdapter listener = new ListenerAdapter(l);
@@ -235,16 +235,18 @@ public class LottieComposition {
     /**
      * @see LottieCompositionFactory#fromRawRes(Context, int)
      */
+    @SuppressWarnings("deprecation")
     @Deprecated
-     public static Cancellable fromRawFile(Context context, @RawRes int resId, OnCompositionLoadedListener l) {
-       ListenerAdapter listener = new ListenerAdapter(l);
-       LottieCompositionFactory.fromRawRes(context, resId).addListener(listener);
-       return listener;
+    public static Cancellable fromRawFile(Context context, @RawRes int resId, OnCompositionLoadedListener l) {
+      ListenerAdapter listener = new ListenerAdapter(l);
+      LottieCompositionFactory.fromRawRes(context, resId).addListener(listener);
+      return listener;
     }
 
     /**
-     * @see LottieCompositionFactory#fromJsonInputStream(InputStream)
+     * @see LottieCompositionFactory#fromJsonInputStream(InputStream, String)
      */
+    @SuppressWarnings("deprecation")
     @Deprecated
     public static Cancellable fromInputStream(InputStream stream, OnCompositionLoadedListener l) {
       ListenerAdapter listener = new ListenerAdapter(l);
@@ -253,8 +255,9 @@ public class LottieComposition {
     }
 
     /**
-     * @see LottieCompositionFactory#fromJsonString(String)
+     * @see LottieCompositionFactory#fromJsonString(String, String)
      */
+    @SuppressWarnings("deprecation")
     @Deprecated
     public static Cancellable fromJsonString(String jsonString, OnCompositionLoadedListener l) {
       ListenerAdapter listener = new ListenerAdapter(l);
@@ -263,8 +266,9 @@ public class LottieComposition {
     }
 
     /**
-     * @see LottieCompositionFactory#fromJsonReader(JsonReader)
+     * @see LottieCompositionFactory#fromJsonReader(JsonReader, String)
      */
+    @SuppressWarnings("deprecation")
     @Deprecated
     public static Cancellable fromJsonReader(JsonReader reader, OnCompositionLoadedListener l) {
       ListenerAdapter listener = new ListenerAdapter(l);
@@ -283,7 +287,7 @@ public class LottieComposition {
     }
 
     /**
-     * @see LottieCompositionFactory#fromJsonInputStreamSync(InputStream)
+     * @see LottieCompositionFactory#fromJsonInputStreamSync(InputStream, String)
      */
     @Nullable
     @WorkerThread
@@ -295,7 +299,7 @@ public class LottieComposition {
     /**
      * This will now auto-close the input stream!
      *
-     * @see LottieCompositionFactory#fromJsonInputStreamSync(InputStream, boolean)
+     * @see LottieCompositionFactory#fromJsonInputStreamSync(InputStream, String)
      */
     @Nullable
     @WorkerThread
@@ -308,7 +312,7 @@ public class LottieComposition {
     }
 
     /**
-     * @see LottieCompositionFactory#fromJsonSync(JSONObject)
+     * @see LottieCompositionFactory#fromJsonSync(JSONObject, String)
      */
     @Nullable
     @WorkerThread
@@ -318,7 +322,7 @@ public class LottieComposition {
     }
 
     /**
-     * @see LottieCompositionFactory#fromJsonStringSync(String)
+     * @see LottieCompositionFactory#fromJsonStringSync(String, String)
      */
     @Nullable
     @WorkerThread
@@ -328,15 +332,16 @@ public class LottieComposition {
     }
 
     /**
-     * @see LottieCompositionFactory#fromJsonReaderSync(JsonReader)
+     * @see LottieCompositionFactory#fromJsonReaderSync(JsonReader, String)
      */
     @Nullable
     @WorkerThread
     @Deprecated
-    public static LottieComposition fromJsonSync(JsonReader reader) throws IOException {
+    public static LottieComposition fromJsonSync(JsonReader reader) {
       return LottieCompositionFactory.fromJsonReaderSync(reader, null).getValue();
     }
 
+    @SuppressWarnings("deprecation")
     private static final class ListenerAdapter implements LottieListener<LottieComposition>, Cancellable {
       private final OnCompositionLoadedListener listener;
       private boolean cancelled = false;

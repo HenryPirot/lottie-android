@@ -5,18 +5,16 @@ import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.ColorFilter;
 import android.graphics.Matrix;
-import android.graphics.Paint;
 import android.graphics.PixelFormat;
-import android.graphics.PorterDuff;
-import android.graphics.PorterDuffXfermode;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.Animatable;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.view.View;
+import android.widget.ImageView;
 
 import androidx.annotation.FloatRange;
 import androidx.annotation.IntDef;
@@ -24,6 +22,8 @@ import androidx.annotation.IntRange;
 import androidx.annotation.MainThread;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
+import androidx.annotation.RestrictTo;
 
 import com.airbnb.lottie.manager.FontAssetManager;
 import com.airbnb.lottie.manager.ImageAssetManager;
@@ -42,20 +42,16 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Set;
 
 /**
  * This can be used to show an lottie animation in any place that would normally take a drawable.
  *
  * @see <a href="http://airbnb.io/lottie">Full Documentation</a>
  */
-@SuppressWarnings({"WeakerAccess", "unused"})
+@SuppressWarnings({"WeakerAccess"})
 public class LottieDrawable extends Drawable implements Drawable.Callback, Animatable {
-  private static final String TAG = LottieDrawable.class.getSimpleName();
-
   private interface LazyCompositionTask {
     void run(LottieComposition composition);
   }
@@ -64,10 +60,31 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
   private LottieComposition composition;
   private final LottieValueAnimator animator = new LottieValueAnimator();
   private float scale = 1f;
-  private boolean systemAnimationsEnabled = true;
 
-  private final Set<ColorFilterData> colorFilterData = new HashSet<>();
+  //Call animationsEnabled() instead of using these fields directly
+  private boolean systemAnimationsEnabled = true;
+  private boolean ignoreSystemAnimationsDisabled = false;
+
+  private boolean safeMode = false;
+
   private final ArrayList<LazyCompositionTask> lazyCompositionTasks = new ArrayList<>();
+  private final ValueAnimator.AnimatorUpdateListener progressUpdateListener = new ValueAnimator.AnimatorUpdateListener() {
+    @Override
+    public void onAnimationUpdate(ValueAnimator animation) {
+      if (compositionLayer != null) {
+        compositionLayer.setProgress(animator.getAnimatedValueAbsolute());
+      }
+    }
+  };
+
+  /**
+   * ImageAssetManager created externally. By Compose, for example.
+   */
+  @Nullable
+  private ImageAssetManager imageAssetManagerOverride;
+  /**
+   * ImageAssetManager created automatically by Lottie for views.
+   */
   @Nullable
   private ImageAssetManager imageAssetManager;
   @Nullable
@@ -85,6 +102,9 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
   private CompositionLayer compositionLayer;
   private int alpha = 255;
   private boolean performanceTrackingEnabled;
+  private boolean outlineMasksAndMattes;
+  private boolean isApplyingOpacityToLayersEnabled;
+  private boolean isExtraScaleEnabled = true;
   /**
    * True if the drawable has not been drawn since the last invalidateSelf.
    * We can do this to prevent things like bounds from getting recalculated
@@ -114,14 +134,7 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
   public static final int INFINITE = ValueAnimator.INFINITE;
 
   public LottieDrawable() {
-    animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
-      @Override
-      public void onAnimationUpdate(ValueAnimator animation) {
-        if (compositionLayer != null) {
-          compositionLayer.setProgress(animator.getAnimatedValueAbsolute());
-        }
-      }
-    });
+    animator.addUpdateListener(progressUpdateListener);
   }
 
   /**
@@ -177,10 +190,6 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
    * `setImageAssetsFolder("airbnb_loader/");`.
    * <p>
    * <p>
-   * If you use LottieDrawable directly, you MUST call {@link #recycleBitmaps()} when you
-   * are done. Calling {@link #recycleBitmaps()} doesn't have to be final and {@link LottieDrawable}
-   * will recreate the bitmaps if needed but they will leak if you don't recycle them.
-   * <p>
    * Be wary if you are using many images, however. Lottie is designed to work with vector shapes
    * from After Effects. If your images look like they could be represented with vector shapes,
    * see if it is possible to convert them to shape layers and re-export your animation. Check
@@ -213,19 +222,30 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
     animator.setComposition(composition);
     setProgress(animator.getAnimatedFraction());
     setScale(scale);
-    updateBounds();
 
     // We copy the tasks to a new ArrayList so that if this method is called from multiple threads,
     // then there won't be two iterators iterating and removing at the same time.
     Iterator<LazyCompositionTask> it = new ArrayList<>(lazyCompositionTasks).iterator();
     while (it.hasNext()) {
       LazyCompositionTask t = it.next();
-      t.run(composition);
+      // The task should never be null but it appears to happen in rare cases. Maybe it's an oem-specific or ART bug.
+      // https://github.com/airbnb/lottie-android/issues/1702
+      if (t != null) {
+        t.run(composition);
+      }
       it.remove();
     }
     lazyCompositionTasks.clear();
 
     composition.setPerformanceTrackingEnabled(performanceTrackingEnabled);
+
+    // Ensure that ImageView updates the drawable width/height so it can
+    // properly calculate its drawable matrix.
+    Callback callback = getCallback();
+    if (callback instanceof ImageView) {
+      ((ImageView) callback).setImageDrawable(null);
+      ((ImageView) callback).setImageDrawable(this);
+    }
 
     return true;
   }
@@ -237,6 +257,22 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
     }
   }
 
+  /**
+   * Enable this to debug slow animations by outlining masks and mattes. The performance overhead of the masks and mattes will
+   * be proportional to the surface area of all of the masks/mattes combined.
+   * <p>
+   * DO NOT leave this enabled in production.
+   */
+  public void setOutlineMasksAndMattes(boolean outline) {
+    if (outlineMasksAndMattes == outline) {
+      return;
+    }
+    outlineMasksAndMattes = outline;
+    if (compositionLayer != null) {
+      compositionLayer.setOutlineMasksAndMattes(outline);
+    }
+  }
+
   @Nullable
   public PerformanceTracker getPerformanceTracker() {
     if (composition != null) {
@@ -245,9 +281,48 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
     return null;
   }
 
+  /**
+   * Sets whether to apply opacity to the each layer instead of shape.
+   * <p>
+   * Opacity is normally applied directly to a shape. In cases where translucent shapes overlap, applying opacity to a layer will be more accurate
+   * at the expense of performance.
+   * <p>
+   * The default value is false.
+   * <p>
+   * Note: This process is very expensive. The performance impact will be reduced when hardware acceleration is enabled.
+   *
+   * @see android.view.View#setLayerType(int, android.graphics.Paint)
+   * @see LottieAnimationView#setRenderMode(RenderMode)
+   */
+  public void setApplyingOpacityToLayersEnabled(boolean isApplyingOpacityToLayersEnabled) {
+    this.isApplyingOpacityToLayersEnabled = isApplyingOpacityToLayersEnabled;
+  }
+
+  /**
+   * Disable the extraScale mode in {@link #draw(Canvas)} function when scaleType is FitXY. It doesn't affect the rendering with other scaleTypes.
+   *
+   * <p>When there are 2 animation layout side by side, the default extra scale mode might leave 1 pixel not drawn between 2 animation, and
+   * disabling the extraScale mode can fix this problem</p>
+   *
+   * <b>Attention:</b> Disable the extra scale mode can downgrade the performance and may lead to larger memory footprint. Please only disable this
+   * mode when using animation with a reasonable dimension (smaller than screen size).
+   *
+   * @see #drawWithNewAspectRatio(Canvas)
+   */
+  public void disableExtraScaleModeInFitXY() {
+    this.isExtraScaleEnabled = false;
+  }
+
+  public boolean isApplyingOpacityToLayersEnabled() {
+    return isApplyingOpacityToLayersEnabled;
+  }
+
   private void buildCompositionLayer() {
     compositionLayer = new CompositionLayer(
         this, LayerParser.parse(composition), composition.getLayers(), composition);
+    if (outlineMasksAndMattes) {
+      compositionLayer.setOutlineMasksAndMattes(true);
+    }
   }
 
   public void clearComposition() {
@@ -259,6 +334,18 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
     imageAssetManager = null;
     animator.clearComposition();
     invalidateSelf();
+  }
+
+  /**
+   * If you are experiencing a device specific crash that happens during drawing, you can set this to true
+   * for those devices. If set to true, draw will be wrapped with a try/catch which will cause Lottie to
+   * render an empty frame rather than crash your app.
+   * <p>
+   * Ideally, you will never need this and the vast majority of apps and animations won't. However, you may use
+   * this for very specific cases if absolutely necessary.
+   */
+  public void setSafeMode(boolean safeMode) {
+    this.safeMode = safeMode;
   }
 
   @Override
@@ -297,50 +384,40 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
   @Override
   public void draw(@NonNull Canvas canvas) {
     isDirty = false;
+
     L.beginSection("Drawable#draw");
-    if (compositionLayer == null) {
-      return;
+
+    if (safeMode) {
+      try {
+        drawInternal(canvas);
+      } catch (Throwable e) {
+        Logger.error("Lottie crashed in draw!", e);
+      }
+    } else {
+      drawInternal(canvas);
     }
 
-    float scale = this.scale;
-    float extraScale = 1f;
-    float maxScale = getMaxScale(canvas);
-    if (scale > maxScale) {
-      scale = maxScale;
-      extraScale = this.scale / scale;
-    }
-
-    int saveCount = -1;
-    if (extraScale > 1) {
-      // This is a bit tricky...
-      // We can't draw on a canvas larger than ViewConfiguration.get(context).getScaledMaximumDrawingCacheSize()
-      // which works out to be roughly the size of the screen because Android can't generate a
-      // bitmap large enough to render to.
-      // As a result, we cap the scale such that it will never be wider/taller than the screen
-      // and then only render in the top left corner of the canvas. We then use extraScale
-      // to scale up the rest of the scale. However, since we rendered the animation to the top
-      // left corner, we need to scale up and translate the canvas to zoom in on the top left
-      // corner.
-      saveCount = canvas.save();
-      float halfWidth = composition.getBounds().width() / 2f;
-      float halfHeight = composition.getBounds().height() / 2f;
-      float scaledHalfWidth = halfWidth * scale;
-      float scaledHalfHeight = halfHeight * scale;
-
-      canvas.translate(
-          getScale() * halfWidth - scaledHalfWidth,
-          getScale() * halfHeight - scaledHalfHeight);
-      canvas.scale(extraScale, extraScale, scaledHalfWidth, scaledHalfHeight);
-    }
-
-    matrix.reset();
-    matrix.preScale(scale, scale);
-    compositionLayer.draw(canvas, matrix, alpha);
     L.endSection("Drawable#draw");
+  }
 
-    if (saveCount > 0) {
-      canvas.restoreToCount(saveCount);
+  private void drawInternal(@NonNull Canvas canvas) {
+    if (!boundsMatchesCompositionAspectRatio()) {
+      drawWithNewAspectRatio(canvas);
+    } else {
+      drawWithOriginalAspectRatio(canvas);
     }
+  }
+
+  private boolean boundsMatchesCompositionAspectRatio() {
+    LottieComposition composition = this.composition;
+    if (composition == null || getBounds().isEmpty()) {
+      return true;
+    }
+    return aspectRatio(getBounds()) == aspectRatio(composition.getBounds());
+  }
+
+  private float aspectRatio(Rect rect) {
+    return rect.width() / (float) rect.height();
   }
 
 // <editor-fold desc="animator">
@@ -348,7 +425,11 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
   @MainThread
   @Override
   public void start() {
-    playAnimation();
+    // Don't auto play when in edit mode.
+    Callback callback = getCallback();
+    if (callback instanceof View && !((View) callback).isInEditMode()) {
+      playAnimation();
+    }
   }
 
   @MainThread
@@ -363,7 +444,7 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
   }
 
   /**
-   * Plays the animation from the beginning. If speed is < 0, it will start at the end
+   * Plays the animation from the beginning. If speed is {@literal <} 0, it will start at the end
    * and play towards the beginning
    */
   @MainThread
@@ -378,11 +459,12 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
       return;
     }
 
-    if (systemAnimationsEnabled || getRepeatCount() == 0) {
+    if (animationsEnabled() || getRepeatCount() == 0) {
       animator.playAnimation();
     }
-    if (!systemAnimationsEnabled) {
+    if (!animationsEnabled()) {
       setFrame((int) (getSpeed() < 0 ? getMinFrame() : getMaxFrame()));
+      animator.endAnimation();
     }
   }
 
@@ -393,7 +475,7 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
   }
 
   /**
-   * Continues playing the animation from its current position. If speed < 0, it will play backwards
+   * Continues playing the animation from its current position. If speed {@literal <} 0, it will play backwards
    * from the current position.
    */
   @MainThread
@@ -407,7 +489,14 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
       });
       return;
     }
-    animator.resumeAnimation();
+
+    if (animationsEnabled() || getRepeatCount() == 0) {
+      animator.resumeAnimation();
+    }
+    if (!animationsEnabled()) {
+      setFrame((int) (getSpeed() < 0 ? getMinFrame() : getMaxFrame()));
+      animator.endAnimation();
+    }
   }
 
   /**
@@ -451,6 +540,9 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
 
   /**
    * Sets the maximum frame that the animation will end at when playing or looping.
+   * <p>
+   * The value will be clamped to the composition bounds. For example, setting Integer.MAX_VALUE would result in the same
+   * thing as composition.endFrame.
    */
   public void setMaxFrame(final int maxFrame) {
     if (composition == null) {
@@ -490,6 +582,7 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
 
   /**
    * Sets the minimum frame to the start time of the specified marker.
+   *
    * @throws IllegalArgumentException if the marker is not found.
    */
   public void setMinFrame(final String markerName) {
@@ -511,6 +604,7 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
 
   /**
    * Sets the maximum frame to the start time + duration of the specified marker.
+   *
    * @throws IllegalArgumentException if the marker is not found.
    */
   public void setMaxFrame(final String markerName) {
@@ -533,6 +627,7 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
   /**
    * Sets the minimum and maximum frame to the start time and start time + duration
    * of the specified marker.
+   *
    * @throws IllegalArgumentException if the marker is not found.
    */
   public void setMinAndMaxFrame(final String markerName) {
@@ -551,6 +646,39 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
     }
     int startFrame = (int) marker.startFrame;
     setMinAndMaxFrame(startFrame, startFrame + (int) marker.durationFrames);
+  }
+
+  /**
+   * Sets the minimum and maximum frame to the start marker start and the maximum frame to the end marker start.
+   * playEndMarkerStartFrame determines whether or not to play the frame that the end marker is on. If the end marker
+   * represents the end of the section that you want, it should be true. If the marker represents the beginning of the
+   * next section, it should be false.
+   *
+   * @throws IllegalArgumentException if either marker is not found.
+   */
+  public void setMinAndMaxFrame(final String startMarkerName, final String endMarkerName, final boolean playEndMarkerStartFrame) {
+    if (composition == null) {
+      lazyCompositionTasks.add(new LazyCompositionTask() {
+        @Override
+        public void run(LottieComposition composition) {
+          setMinAndMaxFrame(startMarkerName, endMarkerName, playEndMarkerStartFrame);
+        }
+      });
+      return;
+    }
+    Marker startMarker = composition.getMarker(startMarkerName);
+    if (startMarker == null) {
+      throw new IllegalArgumentException("Cannot find marker with name " + startMarkerName + ".");
+    }
+    int startFrame = (int) startMarker.startFrame;
+
+    final Marker endMarker = composition.getMarker(endMarkerName);
+    if (endMarker == null) {
+      throw new IllegalArgumentException("Cannot find marker with name " + endMarkerName + ".");
+    }
+    int endFrame = (int) (endMarker.startFrame + (playEndMarkerStartFrame ? 1f : 0f));
+
+    setMinAndMaxFrame(startFrame, endFrame);
   }
 
   /**
@@ -604,14 +732,14 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
   }
 
   /**
-   * Sets the playback speed. If speed < 0, the animation will play backwards.
+   * Sets the playback speed. If speed {@literal <} 0, the animation will play backwards.
    */
   public void setSpeed(float speed) {
     animator.setSpeed(speed);
   }
 
   /**
-   * Returns the current playback speed. This will be < 0 if the animation is playing backwards.
+   * Returns the current playback speed. This will be {@literal <} 0 if the animation is playing backwards.
    */
   public float getSpeed() {
     return animator.getSpeed();
@@ -627,6 +755,7 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
 
   public void removeAllUpdateListeners() {
     animator.removeAllUpdateListeners();
+    animator.addUpdateListener(progressUpdateListener);
   }
 
   public void addAnimatorListener(Animator.AnimatorListener listener) {
@@ -639,6 +768,16 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
 
   public void removeAllAnimatorListeners() {
     animator.removeAllListeners();
+  }
+
+  @RequiresApi(api = Build.VERSION_CODES.KITKAT)
+  public void addAnimatorPauseListener(Animator.AnimatorPauseListener listener) {
+    animator.addPauseListener(listener);
+  }
+
+  @RequiresApi(api = Build.VERSION_CODES.KITKAT)
+  public void removeAnimatorPauseListener(Animator.AnimatorPauseListener listener) {
+    animator.removePauseListener(listener);
   }
 
   /**
@@ -677,7 +816,9 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
       });
       return;
     }
+    L.beginSection("Drawable#setProgress");
     animator.setFrame(MiscUtils.lerp(composition.getStartFrame(), composition.getEndFrame(), progress));
+    L.endSection("Drawable#setProgress");
   }
 
   /**
@@ -737,7 +878,17 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
   }
 
   public boolean isAnimating() {
+    // On some versions of Android, this is called from the LottieAnimationView constructor, before animator was created.
+    // https://github.com/airbnb/lottie-android/issues/1430
+    //noinspection ConstantConditions
+    if (animator == null) {
+      return false;
+    }
     return animator.isRunning();
+  }
+
+  private boolean animationsEnabled() {
+    return systemAnimationsEnabled || ignoreSystemAnimationsDisabled;
   }
 
   void setSystemAnimationsAreEnabled(Boolean areEnabled) {
@@ -745,6 +896,17 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
   }
 
 // </editor-fold>
+
+  /**
+   * Allows ignoring system animations settings, therefore allowing animations to run even if they are disabled.
+   * <p>
+   * Defaults to false.
+   *
+   * @param ignore if true animations will run even when they are disabled in the system settings.
+   */
+  public void setIgnoreDisabledSystemAnimations(boolean ignore) {
+    ignoreSystemAnimationsDisabled = ignore;
+  }
 
   /**
    * Set the scale on the current composition. The only cost of this function is re-rendering the
@@ -760,7 +922,6 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
    */
   public void setScale(float scale) {
     this.scale = scale;
-    updateBounds();
   }
 
   /**
@@ -774,8 +935,7 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
    * the documentation at http://airbnb.io/lottie for more information about importing shapes from
    * Sketch or Illustrator to avoid this.
    */
-  public void setImageAssetDelegate(
-      @SuppressWarnings("NullableProblems") ImageAssetDelegate assetDelegate) {
+  public void setImageAssetDelegate(ImageAssetDelegate assetDelegate) {
     this.imageAssetDelegate = assetDelegate;
     if (imageAssetManager != null) {
       imageAssetManager.setDelegate(assetDelegate);
@@ -785,8 +945,7 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
   /**
    * Use this to manually set fonts.
    */
-  public void setFontAssetDelegate(
-      @SuppressWarnings("NullableProblems") FontAssetDelegate assetDelegate) {
+  public void setFontAssetDelegate(FontAssetDelegate assetDelegate) {
     this.fontAssetDelegate = assetDelegate;
     if (fontAssetManager != null) {
       fontAssetManager.setDelegate(assetDelegate);
@@ -812,15 +971,6 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
 
   public LottieComposition getComposition() {
     return composition;
-  }
-
-  private void updateBounds() {
-    if (composition == null) {
-      return;
-    }
-    float scale = getScale();
-    setBounds(0, 0, (int) (composition.getBounds().width() * scale),
-        (int) (composition.getBounds().height() * scale));
   }
 
   public void cancelAnimation() {
@@ -868,7 +1018,7 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
 
   /**
    * Add an property callback for the specified {@link KeyPath}. This {@link KeyPath} can resolve
-   * to multiple contents. In that case, the callbacks's value will apply to all of them.
+   * to multiple contents. In that case, the callback's value will apply to all of them.
    * <p>
    * Internally, this will check if the {@link KeyPath} has already been resolved with
    * {@link #resolveKeyPath(KeyPath)} and will resolve it if it hasn't.
@@ -885,7 +1035,10 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
       return;
     }
     boolean invalidate;
-    if (keyPath.getResolvedElement() != null) {
+    if (keyPath == KeyPath.COMPOSITION) {
+      compositionLayer.addValueCallback(property, callback);
+      invalidate = true;
+    } else if (keyPath.getResolvedElement() != null) {
       keyPath.getResolvedElement().addValueCallback(property, callback);
       invalidate = true;
     } else {
@@ -914,7 +1067,7 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
    * drawable.addValueCallback(yourKeyPath, LottieProperty.COLOR) { yourColor }
    */
   public <T> void addValueCallback(KeyPath keyPath, T property,
-                                   final SimpleLottieValueCallback<T> callback) {
+      final SimpleLottieValueCallback<T> callback) {
     addValueCallback(keyPath, property, new LottieValueCallback<T>() {
       @Override
       public T getValue(LottieFrameInfo<T> frameInfo) {
@@ -952,7 +1105,18 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
     return null;
   }
 
+  /**
+   * Use by Lottie internally when outside of a normal View tree such as for Jetpack Compose.
+   */
+  @RestrictTo(RestrictTo.Scope.LIBRARY_GROUP)
+  void setImageAssetManager(@Nullable ImageAssetManager imageAssetManager) {
+    this.imageAssetManagerOverride = imageAssetManager;
+  }
+
   private ImageAssetManager getImageAssetManager() {
+    if (imageAssetManagerOverride != null) {
+      return imageAssetManagerOverride;
+    }
     if (getCallback() == null) {
       // We can't get a bitmap since we can't get a Context from the callback.
       return null;
@@ -1046,48 +1210,91 @@ public class LottieDrawable extends Drawable implements Drawable.Callback, Anima
     return Math.min(maxScaleX, maxScaleY);
   }
 
-  private static class ColorFilterData {
-
-    final String layerName;
-    @Nullable
-    final String contentName;
-    @Nullable
-    final ColorFilter colorFilter;
-
-    ColorFilterData(@Nullable String layerName, @Nullable String contentName,
-                    @Nullable ColorFilter colorFilter) {
-      this.layerName = layerName;
-      this.contentName = contentName;
-      this.colorFilter = colorFilter;
+  private void drawWithNewAspectRatio(Canvas canvas) {
+    if (compositionLayer == null) {
+      return;
     }
 
-    @Override
-    public int hashCode() {
-      int hashCode = 17;
-      if (layerName != null) {
-        hashCode = hashCode * 31 * layerName.hashCode();
+    int saveCount = -1;
+    Rect bounds = getBounds();
+    // In fitXY mode, the scale doesn't take effect.
+    float scaleX = bounds.width() / (float) composition.getBounds().width();
+    float scaleY = bounds.height() / (float) composition.getBounds().height();
+
+    if (isExtraScaleEnabled) {
+      float maxScale = Math.min(scaleX, scaleY);
+      float extraScale = 1f;
+      if (maxScale < 1f) {
+        extraScale = extraScale / maxScale;
+        scaleX = scaleX / extraScale;
+        scaleY = scaleY / extraScale;
       }
 
-      if (contentName != null) {
-        hashCode = hashCode * 31 * contentName.hashCode();
+      if (extraScale > 1) {
+        saveCount = canvas.save();
+        float halfWidth = bounds.width() / 2f;
+        float halfHeight = bounds.height() / 2f;
+        float scaledHalfWidth = halfWidth * maxScale;
+        float scaledHalfHeight = halfHeight * maxScale;
+
+        canvas.translate(
+            halfWidth - scaledHalfWidth,
+            halfHeight - scaledHalfHeight);
+        canvas.scale(extraScale, extraScale, scaledHalfWidth, scaledHalfHeight);
       }
-      return hashCode;
     }
 
-    @Override
-    public boolean equals(Object obj) {
-      if (this == obj) {
-        return true;
-      }
+    matrix.reset();
+    matrix.preScale(scaleX, scaleY);
+    compositionLayer.draw(canvas, matrix, alpha);
 
-      if (!(obj instanceof ColorFilterData)) {
-        return false;
-      }
+    if (saveCount > 0) {
+      canvas.restoreToCount(saveCount);
+    }
+  }
 
-      final ColorFilterData other = (ColorFilterData) obj;
+  private void drawWithOriginalAspectRatio(Canvas canvas) {
+    if (compositionLayer == null) {
+      return;
+    }
 
-      return hashCode() == other.hashCode() && colorFilter == other.colorFilter;
+    float scale = this.scale;
+    float extraScale = 1f;
+    float maxScale = getMaxScale(canvas);
+    if (scale > maxScale) {
+      scale = maxScale;
+      extraScale = this.scale / scale;
+    }
 
+    int saveCount = -1;
+    if (extraScale > 1) {
+      // This is a bit tricky...
+      // We can't draw on a canvas larger than ViewConfiguration.get(context).getScaledMaximumDrawingCacheSize()
+      // which works out to be roughly the size of the screen because Android can't generate a
+      // bitmap large enough to render to.
+      // As a result, we cap the scale such that it will never be wider/taller than the screen
+      // and then only render in the top left corner of the canvas. We then use extraScale
+      // to scale up the rest of the scale. However, since we rendered the animation to the top
+      // left corner, we need to scale up and translate the canvas to zoom in on the top left
+      // corner.
+      saveCount = canvas.save();
+      float halfWidth = composition.getBounds().width() / 2f;
+      float halfHeight = composition.getBounds().height() / 2f;
+      float scaledHalfWidth = halfWidth * scale;
+      float scaledHalfHeight = halfHeight * scale;
+
+      canvas.translate(
+          getScale() * halfWidth - scaledHalfWidth,
+          getScale() * halfHeight - scaledHalfHeight);
+      canvas.scale(extraScale, extraScale, scaledHalfWidth, scaledHalfHeight);
+    }
+
+    matrix.reset();
+    matrix.preScale(scale, scale);
+    compositionLayer.draw(canvas, matrix, alpha);
+
+    if (saveCount > 0) {
+      canvas.restoreToCount(saveCount);
     }
   }
 }
